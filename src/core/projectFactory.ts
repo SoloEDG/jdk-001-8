@@ -1,5 +1,6 @@
 import { DEFAULT_FRAME_DELAY_MS, PRESET_COLORS } from './constants'
 import { defaultFrames } from './frameFactory'
+import { defaultReferenceSettings } from './referenceImage'
 import type { CanvasSize, PixelProject } from './types'
 
 let projectCounter = 0
@@ -17,6 +18,7 @@ export function createProject(name: string, canvasSize: CanvasSize = 16): PixelP
     frameDelayMs: DEFAULT_FRAME_DELAY_MS,
     recentColors: [],
     customColors: [],
+    reference: defaultReferenceSettings(),
     updatedAt: now,
   }
 }

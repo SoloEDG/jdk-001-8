@@ -17,6 +17,31 @@ export interface Frame {
   layers: Layer[]
 }
 
+export interface ReferenceImageMeta {
+  name: string
+  width: number
+  height: number
+  mimeType: string
+  byteSize: number
+  compressed: boolean
+  savedAt: number
+}
+
+/**
+ * A tracing reference that sits under the canvas. It is intentionally kept
+ * outside of frames/layers so it never becomes part of the artwork.
+ */
+export interface ReferenceSettings {
+  image: ReferenceImageMeta | null
+  visible: boolean
+  opacity: number
+  /** 1 = image fitted (contained) inside the canvas. */
+  scale: number
+  /** Offset as a fraction of the canvas size, 0 = centered. */
+  offsetX: number
+  offsetY: number
+}
+
 export interface PixelProject {
   id: string
   name: string
@@ -27,6 +52,7 @@ export interface PixelProject {
   frameDelayMs: number
   recentColors: string[]
   customColors: string[]
+  reference: ReferenceSettings
   updatedAt: number
 }
 

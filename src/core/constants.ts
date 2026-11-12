@@ -41,3 +41,18 @@ export const STORAGE_KEYS = {
 export const DEFAULT_FRAME_DELAY_MS = 200
 
 export const EXPORT_PIXEL_SCALE = 16
+
+export const DEFAULT_REFERENCE_OPACITY = 0.55
+
+/** Files larger than this are always re-encoded before being stored. */
+export const MAX_REFERENCE_SOURCE_BYTES = 900 * 1024
+
+/** Maximum width/height of the stored copy, keeping memory usage predictable. */
+export const MAX_REFERENCE_IMAGE_DIMENSION = 1600
+
+/** Target upper bound for the compressed copy (IndexedDB, never localStorage). */
+export const MAX_REFERENCE_STORED_BYTES = 2 * 1024 * 1024
+
+export const REFERENCE_DB_NAME = 'jdk-001-reference-images'
+export const REFERENCE_DB_VERSION = 1
+export const REFERENCE_STORE_NAME = 'images'

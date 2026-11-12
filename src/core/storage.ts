@@ -1,5 +1,6 @@
 import { STORAGE_KEYS } from './constants'
 import { createProject, defaultActiveColor } from './projectFactory'
+import { normalizeReferenceSettings } from './referenceImage'
 import type { EditorPreferences, PixelProject } from './types'
 
 function readJson<T>(key: string, fallback: T): T {
@@ -17,7 +18,10 @@ function writeJson(key: string, value: unknown): void {
 }
 
 export function loadProjects(): PixelProject[] {
-  return readJson<PixelProject[]>(STORAGE_KEYS.projects, [])
+  return readJson<PixelProject[]>(STORAGE_KEYS.projects, []).map((project) => ({
+    ...project,
+    reference: normalizeReferenceSettings(project.reference),
+  }))
 }
 
 export function saveProjects(projects: PixelProject[]): void {

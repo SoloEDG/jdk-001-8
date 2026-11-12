@@ -4,6 +4,12 @@ import { exportAllFramesPng, exportFramePng } from '../core/exportPng'
 import { addCustomColor, pushRecentColor } from '../core/paletteService'
 import { compositeLayers } from '../core/pixelGrid'
 import { createProject } from '../core/projectFactory'
+import { defaultReferenceSettings, processReferenceImageFile } from '../core/referenceImage'
+import {
+  deleteReferenceImage,
+  loadReferenceImage,
+  saveReferenceImage,
+} from '../core/referenceStorage'
 import {
   ensureDefaultProject,
   loadPreferences,
@@ -13,7 +19,7 @@ import {
   saveProjects,
   upsertProject,
 } from '../core/storage'
-import type { CanvasSize, PixelProject, ToolType } from '../core/types'
+import type { CanvasSize, PixelProject, ReferenceSettings, ToolType } from '../core/types'
 import { createAnimationPlayer } from './animationPlayer'
 import {
   addFrameToProject,
@@ -33,6 +39,27 @@ const prefs = reactive(loadPreferences())
 const linePending = ref<LinePending | null>(null)
 const isPlaying = ref(false)
 const previewFrameIndex = ref<number | null>(null)
+
+type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+/** Image bytes live in IndexedDB; the project only keeps tiny metadata. */
+const referenceDataUrl = ref<string | null>(null)
+const referenceStatus = ref<ReferenceStatus>('idle')
+const referenceError = ref<string | null>(null)
+let referenceLoadToken = 0
+
+/** Invalidates in-flight imports when a project's reference is removed/deleted. */
+const referenceOperations = new Map<string, number>()
+
+function beginReferenceOperation(projectId: string): number {
+  const next = (referenceOperations.get(projectId) ?? 0) + 1
+  referenceOperations.set(projectId, next)
+  return next
+}
+
+function isCurrentReferenceOperation(projectId: string, operation: number): boolean {
+  return referenceOperations.get(projectId) === operation
+}
 
 const player = createAnimationPlayer({ isPlaying, previewFrameIndex })
 
@@ -84,6 +111,182 @@ const compositePixels = computed(() => {
   if (!frame) return []
   return compositeLayers(frame.layers, canvasSize.value)
 })
+
+function describeReferenceError(error: unknown): string {
+  if (
+    error instanceof DOMException &&
+    (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+  ) {
+    return '浏览器可用存储空间不足。'
+  }
+  if (error instanceof Error && error.message) return error.message
+  return '未知错误。'
+}
+
+function reloadReferenceForActiveProject() {
+  const project = activeProject.value
+  const token = ++referenceLoadToken
+  referenceDataUrl.value = null
+  referenceError.value = null
+
+  if (!project || !project.reference.image) {
+    referenceStatus.value = 'idle'
+    return
+  }
+
+  referenceStatus.value = 'loading'
+  void loadReferenceImage(project.id)
+    .then((record) => {
+      if (token !== referenceLoadToken) return
+      if (!record) {
+        referenceStatus.value = 'error'
+        referenceError.value =
+          '参考图加载失败，数据可能已被浏览器清理。已保留当前画面内容，请重新导入。'
+        return
+      }
+      referenceDataUrl.value = record.dataUrl
+      referenceStatus.value = 'ready'
+    })
+    .catch((error) => {
+      if (token !== referenceLoadToken) return
+      referenceStatus.value = 'error'
+      referenceError.value = `参考图加载失败：${describeReferenceError(error)} 已保留当前画面内容。`
+    })
+}
+
+function updateReferenceSettings(patch: Partial<ReferenceSettings>) {
+  mutateProject((project) => {
+    if (!project.reference.image) return project
+    return { ...project, reference: { ...project.reference, ...patch } }
+  })
+}
+
+function setReferenceOpacity(value: number) {
+  if (!Number.isFinite(value)) return
+  updateReferenceSettings({ opacity: Math.min(1, Math.max(0, value)) })
+}
+
+function setReferenceScale(value: number) {
+  if (!Number.isFinite(value)) return
+  updateReferenceSettings({ scale: Math.min(4, Math.max(0.05, value)) })
+}
+
+function setReferenceOffsetX(value: number) {
+  if (!Number.isFinite(value)) return
+  updateReferenceSettings({ offsetX: Math.min(2, Math.max(-2, value)) })
+}
+
+function setReferenceOffsetY(value: number) {
+  if (!Number.isFinite(value)) return
+  updateReferenceSettings({ offsetY: Math.min(2, Math.max(-2, value)) })
+}
+
+function toggleReferenceVisible() {
+  mutateProject((project) =>
+    project.reference.image
+      ? {
+          ...project,
+          reference: { ...project.reference, visible: !project.reference.visible },
+        }
+      : project,
+  )
+}
+
+function resetReferenceTransform() {
+  updateReferenceSettings({ scale: 1, offsetX: 0, offsetY: 0 })
+}
+
+async function importReferenceImage(file: File) {
+  const project = activeProject.value
+  if (!project) return
+  const projectId = project.id
+  const token = referenceLoadToken
+  const operation = beginReferenceOperation(projectId)
+
+  referenceStatus.value = 'loading'
+  referenceError.value = null
+
+  try {
+    const processed = await processReferenceImageFile(file)
+    if (
+      !isCurrentReferenceOperation(projectId, operation) ||
+      !projects.value.some((p) => p.id === projectId)
+    ) {
+      return
+    }
+    await saveReferenceImage(projectId, processed.dataUrl, processed.meta)
+    if (!isCurrentReferenceOperation(projectId, operation)) {
+      // Removed or deleted while the image was being written.
+      await deleteReferenceImage(projectId).catch(() => {
+        /* Nothing else to clean up. */
+      })
+      return
+    }
+
+    const target = projects.value.find((p) => p.id === projectId)
+    if (target) {
+      const updated: PixelProject = {
+        ...target,
+        reference: { ...defaultReferenceSettings(), image: processed.meta },
+        updatedAt: Date.now(),
+      }
+      projects.value = upsertProject(projects.value, updated)
+      persistProjects()
+    }
+
+    if (activeProject.value?.id === projectId) {
+      if (token === referenceLoadToken) {
+        referenceDataUrl.value = processed.dataUrl
+        referenceStatus.value = 'ready'
+      } else {
+        // The user switched away and back while this import was running.
+        reloadReferenceForActiveProject()
+      }
+    }
+  } catch (error) {
+    if (activeProject.value?.id === projectId) {
+      if (token === referenceLoadToken) {
+        referenceStatus.value = 'error'
+        referenceError.value = `参考图导入失败：${describeReferenceError(error)} 画面内容未受影响。`
+      } else {
+        reloadReferenceForActiveProject()
+      }
+    }
+  }
+}
+
+function removeReferenceImage() {
+  const project = activeProject.value
+  if (!project || !project.reference.image) return
+  const projectId = project.id
+  beginReferenceOperation(projectId)
+
+  projects.value = upsertProject(projects.value, {
+    ...project,
+    reference: defaultReferenceSettings(),
+    updatedAt: Date.now(),
+  })
+  persistProjects()
+
+  if (activeProject.value?.id === projectId) {
+    referenceLoadToken += 1
+    referenceDataUrl.value = null
+    referenceStatus.value = 'idle'
+    referenceError.value = null
+  }
+
+  void deleteReferenceImage(projectId).catch(() => {
+    /* Metadata is already gone; a leftover blob is harmless. */
+  })
+}
+
+watch(
+  () => activeProject.value?.id,
+  () => {
+    reloadReferenceForActiveProject()
+  },
+  { immediate: true },
+)
 
 watch(
   () => prefs.activeProjectId,
@@ -222,6 +425,7 @@ function loadProject(id: string) {
 }
 
 function deleteProject(id: string) {
+  beginReferenceOperation(id)
   projects.value = removeProject(projects.value, id)
   if (projects.value.length === 0) {
     const fallback = createProject('未命名项目')
@@ -233,6 +437,9 @@ function deleteProject(id: string) {
   persistProjects()
   persistPrefs()
   player.stop()
+  void deleteReferenceImage(id).catch(() => {
+    /* Project metadata is gone; a leftover blob is harmless. */
+  })
 }
 
 function addCustomPaletteColor(color: string) {
@@ -269,6 +476,9 @@ function buildEditorStore() {
     linePending,
     isPlaying,
     previewFrameIndex,
+    referenceDataUrl,
+    referenceStatus,
+    referenceError,
     setActiveColor,
     setTool,
     setCanvasSize,
@@ -290,6 +500,14 @@ function buildEditorStore() {
     addCustomPaletteColor,
     exportCurrentFrame,
     exportAllFrames,
+    importReferenceImage,
+    removeReferenceImage,
+    setReferenceOpacity,
+    setReferenceScale,
+    setReferenceOffsetX,
+    setReferenceOffsetY,
+    resetReferenceTransform,
+    toggleReferenceVisible,
   })
 }
 

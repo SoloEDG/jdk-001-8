@@ -18,7 +18,7 @@ function save() {
 <template>
   <section class="panel side-panel project-panel">
     <h3>项目</h3>
-    <p class="hint">数据保存在浏览器 localStorage</p>
+    <p class="hint">项目保存在浏览器 localStorage，参考图单独存放在 IndexedDB</p>
 
     <div class="project-actions">
       <input v-model="newName" type="text" placeholder="新项目名称" />

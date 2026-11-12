@@ -3,6 +3,7 @@ import FramePanel from './components/FramePanel.vue'
 import LayerPanel from './components/LayerPanel.vue'
 import PixelCanvas from './components/PixelCanvas.vue'
 import ProjectPanel from './components/ProjectPanel.vue'
+import ReferencePanel from './components/ReferencePanel.vue'
 import ToolBar from './components/ToolBar.vue'
 </script>
 
@@ -12,6 +13,7 @@ import ToolBar from './components/ToolBar.vue'
     <PixelCanvas />
     <aside class="right-rail">
       <ProjectPanel />
+      <ReferencePanel />
       <LayerPanel />
       <FramePanel />
     </aside>
